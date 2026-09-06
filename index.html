@@ -117,8 +117,13 @@ const HORSE_SVG_PATH =
     'L126,276 L145,273 L181,264 L271,264 L329,280 L398,282 L482,265 L532,214 '+
     'L576,167 L624,141 L666,133z';
 
-// Draw the horse path (pure white, so it tints per-instance) into a tile.
-function drawHorseToTexture(tileIndex)
+// Draw one half of the horse path (pure white, so it tints per-instance) into
+// a tile. The horse is centered so its vertical centerline lands on the tile's
+// horizontal center — i.e. the future joint — so clipping to the left/right
+// half of the tile leaves the cut edge exactly at tile-center. When either
+// half-tile is drawn centered on a half-body whose origin is the joint, the two
+// silhouettes meet seamlessly at the pivot.
+function drawHorseHalfTexture(tileIndex, left, description)
 {
     return drawToTexture(tileIndex, ctx =>
     {
@@ -134,12 +139,20 @@ function drawHorseToTexture(tileIndex)
         }
         const w = maxX - minX, h = maxY - minY;
         const scale = Math.min(DRAW_SIZE / w, DRAW_SIZE / h) * .85;
+        // clip FIRST, in DRAW_SIZE space (before the SVG-space transform below),
+        // keeping only the requested half of the tile around the centerline
+        ctx.save();
+        ctx.beginPath();
+        if (left) ctx.rect(0, 0, DRAW_SIZE / 2, DRAW_SIZE);
+        else      ctx.rect(DRAW_SIZE / 2, 0, DRAW_SIZE / 2, DRAW_SIZE);
+        ctx.clip();
         ctx.translate((DRAW_SIZE - w * scale) / 2 - minX * scale,
                       (DRAW_SIZE - h * scale) / 2 - minY * scale);
         ctx.scale(scale, scale);
         ctx.fillStyle = '#fff';
         ctx.fill(new Path2D(HORSE_SVG_PATH));
-    }, 'horse');
+        ctx.restore();
+    }, description);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -257,9 +270,26 @@ function _decomposeConvex(pts, tris)
     return pieces;
 }
 
-// Outline vertices from horse.svg, flipped to y-up, centered, and scaled so the
-// physics body matches the on-screen horse sprite.
-const HORSE_PHYSICS = (() =>
+// Sutherland-Hodgman clip a polygon to a half-plane (x <= 0 for left, x >= 0
+// for right). Returns the clipped polygon as a list of vec2 points.
+function _clipHalfPlane(pts, keepLeft)
+{
+    if (!pts.length) return [];
+    const out = [], n = pts.length;
+    for (let i = 0; i < n; i++)
+    {
+        const cur = pts[i], nxt = pts[(i + 1) % n];
+        const cIn = keepLeft ? cur.x <= 0 : cur.x >= 0;
+        const nIn = keepLeft ? nxt.x <= 0 : nxt.x >= 0;
+        if (cIn && nIn)               out.push(nxt);
+        else if (cIn && !nIn)         out.push(vec2(0, cur.y + (nxt.y - cur.y) * (-cur.x) / (nxt.x - cur.x)));
+        else if (!cIn && nIn) { out.push(vec2(0, cur.y + (nxt.y - cur.y) * (-cur.x) / (nxt.x - cur.x))); out.push(nxt); }
+    }
+    return out;
+}
+
+// Shared parser — horse.svg path → centered, scaled, y-up vertices.
+function _horseParsedPts()
 {
     const nums = HORSE_SVG_PATH.match(/-?\d+(\.\d+)?/g).map(Number);
     let pts = [];
@@ -276,45 +306,58 @@ const HORSE_PHYSICS = (() =>
     const cx = minX + w / 2;
     pts = pts.map(p => vec2((p.x - cx) * s, -(p.y - minY - h / 2) * s)); // SVG is y-down
     if (_polyArea(pts) < 0) pts.reverse();                              // Box2D wants CCW
+    return pts;
+}
 
-    const pieces = _decomposeConvex(pts, _earClip(pts)).filter(p =>
-        Math.abs(_polyArea(p.map(i => pts[i]))) > 5e-5);               // drop degenerate
-    return pieces.map(p => p.map(i => pts[i]));
-})();
-
-///////////////////////////////////////////////////////////////////////////////
-// Plinko ball — uses the Box2D contact callback to make peg-hit SFX & pops.
-class PlinkoBall extends Box2dObject
+// Decompose a polygon into Box2D-compatible convex fixtures.
+function _toPhysicsFixtures(pts)
 {
-    constructor(pos, color)
+    const pieces = _decomposeConvex(pts, _earClip(pts)).filter(p =>
+        Math.abs(_polyArea(p.map(i => pts[i]))) > 5e-5);
+    return pieces.map(p => p.map(i => pts[i]));
+}
+
+// Split horse into left / right halves at the vertical center (x = 0).
+const HORSE_PHYSICS_LEFT  = _toPhysicsFixtures(_clipHalfPlane(_horseParsedPts(), true));
+const HORSE_PHYSICS_RIGHT = _toPhysicsFixtures(_clipHalfPlane(_horseParsedPts(), false));
+
+// One independently-swinging half of the horse (left or right). Rendered & synced
+// by the engine like any Box2dObject; glued to its sibling by a revolute joint at
+// the centre so each half pivots around the horse's middle.
+class HorseSegment extends Box2dObject
+{
+    constructor(pos, color, physics, icon, drawGlow, ballRef)
     {
         super(pos, vec2(BALL_RADIUS*2), undefined, 0, color);
-        // horse-shaped rigid body — one Box2D fixture per convex piece
-        for (const poly of HORSE_PHYSICS)
+        // horse-shaped half body — one Box2D fixture per convex piece
+        for (const poly of physics)
             this.addPoly(poly, 1, .1, .55);
         this.body.SetLinearDamping(0.05);
         this.body.SetBullet(true); // continuous collision so fast balls
                                    // can't tunnel through pegs
-        this.scored = false;
+        this.icon = icon;
+        this.drawGlow = drawGlow;
+        this.ballRef = ballRef; // owning PlinkoBall, so the two halves never
+                                // "hit" each other at the joint
         this.lineColor = hsl(0, 0, 0, .6);
         this.lineWidth = .08;
-        this.pegSoundCooldown = new Timer();
     }
 
     beginContact(other)
     {
+        if (other && other.ballRef === this.ballRef) return; // own other half
         if (other && other.isPeg)
         {
             const speed = this.getLinearVelocity().length();
 
             // skip soft taps and per-ball-throttle so a single ball can't
             // spam the speakers when it nestles between two pegs
-            if (speed > 2.5 && !this.pegSoundCooldown.active())
+            if (speed > 2.5 && !this.ballRef.pegSoundCooldown.active())
             {
                 const pitch = clamp(.7 + speed * .03, .7, 1.6);
                 const vol   = clamp(.05 + speed * .02, .15, .55);
                 sndPeg.play(this.pos, vol, pitch);
-                this.pegSoundCooldown.set(.05);
+                this.ballRef.pegSoundCooldown.set(.05);
             }
 
             // brief peg flash (always — visual feedback is fine even on soft hits)
@@ -338,10 +381,60 @@ class PlinkoBall extends Box2dObject
 
     render()
     {
-        // horse ball — soft glow behind the rotating horse silhouette
-        const glow = this.color.withAlpha(.4);
-        drawTile(this.pos, vec2(BALL_RADIUS*4), icons.glow, glow);
-        drawTile(this.pos, vec2(HORSE_BALL_SIZE), icons.horse, this.color, this.angle);
+        // soft glow behind the whole horse (drawn once, from the left half's
+        // position = the joint centre); the half silhouette on top, rotating
+        // independently with this half's angle.
+        if (this.drawGlow)
+        {
+            const glow = this.color.withAlpha(.4);
+            drawTile(this.pos, vec2(BALL_RADIUS*4), icons.glow, glow);
+        }
+        drawTile(this.pos, vec2(HORSE_BALL_SIZE), this.icon, this.color, this.angle);
+    }
+}
+
+// A "ball" is the pair of horse halves pinned at the centre by a revolute joint.
+// A plain container (not an EngineObject) so collision/render/scoring treats the
+// pair as one unit; the joint keeps both half-origins on the pivot, so this.pos
+// is always the horse's centre.
+class PlinkoBall
+{
+    constructor(pos, color)
+    {
+        this.color = color;
+        this.left  = new HorseSegment(pos, color, HORSE_PHYSICS_LEFT,
+                                      icons.horseLeft, true, this);
+        this.right = new HorseSegment(pos, color, HORSE_PHYSICS_RIGHT,
+                                      icons.horseRight, false, this);
+        this.destroyed = false;
+        this.scored = false;
+        this.scoreColor = null;
+        this.cleanupTimer = null;
+        this.pegSoundCooldown = new Timer();
+
+        // revolute joint pinning both halves around the horse's centre (both
+        // half-origins are the cut = the pivot, so the anchor is this pos)
+        const jointDef = new box2d.instance.b2RevoluteJointDef();
+        jointDef.Initialize(this.left.body, this.right.body, box2d.vec2dTo(pos));
+        this.joint = box2d.world.CreateJoint(jointDef);
+    }
+
+    get pos() { return this.left.pos; }
+
+    getLinearVelocity() { return this.left.getLinearVelocity(); }
+    setLinearVelocity(v)
+    {
+        this.left.setLinearVelocity(v);
+        this.right.setLinearVelocity(v);
+    }
+
+    destroy()
+    {
+        if (this.destroyed) return;
+        if (this.joint) { box2d.world.DestroyJoint(this.joint); this.joint = null; }
+        if (!this.left.destroyed)  this.left.destroy();
+        if (!this.right.destroyed) this.right.destroy();
+        this.destroyed = true;
     }
 }
 
@@ -439,7 +532,7 @@ function dropBall()
         vec2(x, DROP_LINE_Y + 2.5),
         BALL_COLORS[dropCount % BALL_COLORS.length]);
     // tiny random nudge so identical drops don't always go the same place
-    ball.body.SetLinearVelocity(box2d.vec2dTo(vec2(rand(-.5, .5), 0)));
+    ball.setLinearVelocity(vec2(rand(-.5, .5), 0));
     balls.push(ball);
     dropCount++;
     sndDrop.play(vec2(x, DROP_LINE_Y + 2.5), .6, 1 + rand(-.05, .05));
@@ -652,7 +745,8 @@ async function gameInit()
     // (8x8 atlas so tile 16 stays free for the horse sprite)
     initDrawToTexture(8);
     icons = initDefaultAtlas();
-    icons.horse = drawHorseToTexture(16);
+    icons.horseLeft  = drawHorseHalfTexture(16, true,  'horse left half');
+    icons.horseRight = drawHorseHalfTexture(17, false, 'horse right half');
 
     setSoundVolume(.7);
     installAutoPause();
@@ -793,7 +887,9 @@ function gameRender()
              vec2(aimClamped - 0.25, DROP_LINE_Y - 1),
              .12, hsl(.13, .9, .7, a));
     drawTile(vec2(aimClamped, DROP_LINE_Y + 2.5),
-        vec2(HORSE_BALL_SIZE), icons.horse, hsl(.13, .9, .7, .5));
+        vec2(HORSE_BALL_SIZE), icons.horseLeft,  hsl(.13, .9, .7, .7));
+    drawTile(vec2(aimClamped, DROP_LINE_Y + 2.5),
+        vec2(HORSE_BALL_SIZE), icons.horseRight, hsl(.13, .9, .7, .7));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
