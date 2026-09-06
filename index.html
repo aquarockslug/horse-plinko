@@ -1,5 +1,5 @@
 <!DOCTYPE html><head>
-<title>LittleJS Plinker</title>
+<title>Horse Plinko</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -39,14 +39,15 @@ const BOARD_WIDTH    = 22;
 const BOARD_HEIGHT   = 23;
 const PEG_ROWS       = 4;
 const PEG_COLS_TOP   = 2;          // pegs in top row
-const PEG_RADIUS     = 0.32;
+const PEG_RADIUS     = 0.33;
 const PEG_SPACING    = 4;        // distance between peg centers
 const SLOT_COUNT     = 5;
 const START_BALLS    = 10;         // balls you begin a run with
 const BALL_PER_BONUS = 100;        // earn +1 ball for every this many points
 const BALL_RADIUS    = 0.55;
-const HORSE_BALL_SIZE = BALL_RADIUS * 6; // horse sprite + physics foot-print
-const DROP_LINE_Y    = BOARD_HEIGHT/2 - 4;
+const HORSE_BALL_SIZE = BALL_RADIUS * 8; // horse sprite + physics foot-print
+const STUCK_TIMEOUT   = 15; // despawn unscored balls stuck on the board this long
+const DROP_LINE_Y    = BOARD_HEIGHT/2 - 6;
 const FLOOR_Y        = -BOARD_HEIGHT/2 - 2.5;
 const SLOT_TOP_Y     = FLOOR_Y + 3;
 const SLOT_VALUES    = [ 20, 50, 100, 50, 20 ]; // center = high
@@ -100,6 +101,11 @@ function initSounds()
 
 // Bake the horse silhouette from horse.svg into a spare atlas tile so the
 // ball can render as a tiny horse instead of a plain circle.
+// How far (in DRAW_SIZE px) each half's silhouette hangs past the centreline,
+// so the two halves overlap around the joint instead of meeting at hairline.
+// Hidden at rest, keeps the halves looking connected while they pivot.
+const JOINT_OVERLAP = 48;
+
 const HORSE_SVG_PATH =
     'M684,131 L705,111 L703,134 L720,112 L714,147 L737,171 L749,212 L784,267 '+
     'L769,297 L741,302 L725,271 L692,249 L678,248 L657,237 L635,298 L635,319 '+
@@ -117,34 +123,59 @@ const HORSE_SVG_PATH =
     'L126,276 L145,273 L181,264 L271,264 L329,280 L398,282 L482,265 L532,214 '+
     'L576,167 L624,141 L666,133z';
 
+// Shared SVG-space fit for the horse path: its pixel bbox and the scale that
+// centers the full silhouette in DRAW_SIZE space with a little margin.
+function _horseFit()
+{
+    const nums = HORSE_SVG_PATH.match(/-?\d+(\.\d+)?/g).map(Number);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i + 1 < nums.length; i += 2)
+    {
+        if (nums[i]     < minX) minX = nums[i];
+        if (nums[i]     > maxX) maxX = nums[i];
+        if (nums[i + 1] < minY) minY = nums[i + 1];
+        if (nums[i + 1] > maxY) maxY = nums[i + 1];
+    }
+    const w = maxX - minX, h = maxY - minY;
+    return { minX, minY, w, h, scale: Math.min(DRAW_SIZE / w, DRAW_SIZE / h) * .85 };
+}
+
+// Draw the whole horse into a tile (used for the translucent aim preview — a
+// single quad so the silhouette is one uniform tint with no overlap band).
+function drawHorseFullTexture(tileIndex, description)
+{
+    return drawToTexture(tileIndex, ctx =>
+    {
+        const { minX, minY, w, h, scale } = _horseFit();
+        ctx.translate((DRAW_SIZE - w * scale) / 2 - minX * scale,
+                      (DRAW_SIZE - h * scale) / 2 - minY * scale);
+        ctx.scale(scale, scale);
+        ctx.fillStyle = '#fff';
+        ctx.fill(new Path2D(HORSE_SVG_PATH));
+    }, description);
+}
+
 // Draw one half of the horse path (pure white, so it tints per-instance) into
 // a tile. The horse is centered so its vertical centerline lands on the tile's
 // horizontal center — i.e. the future joint — so clipping to the left/right
-// half of the tile leaves the cut edge exactly at tile-center. When either
-// half-tile is drawn centered on a half-body whose origin is the joint, the two
-// silhouettes meet seamlessly at the pivot.
+// half of the tile leaves the cut edge near tile-center. Each half overhangs
+// the centerline by JOINT_OVERLAP px, so the two silhouettes overlap around the
+// pivot instead of meeting at a hairline. At rest the overhang is completely
+// hidden (each half paints exactly the mate's region), and while the halves
+// flap around the revolute joint there is always horse material covering the
+// pivot, so the connection reads as seamless rather than a clean split.
 function drawHorseHalfTexture(tileIndex, left, description)
 {
     return drawToTexture(tileIndex, ctx =>
     {
-        // find the path's pixel bounding box so we can center + scale it
-        const nums = HORSE_SVG_PATH.match(/-?\d+(\.\d+)?/g).map(Number);
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (let i = 0; i + 1 < nums.length; i += 2)
-        {
-            if (nums[i]     < minX) minX = nums[i];
-            if (nums[i]     > maxX) maxX = nums[i];
-            if (nums[i + 1] < minY) minY = nums[i + 1];
-            if (nums[i + 1] > maxY) maxY = nums[i + 1];
-        }
-        const w = maxX - minX, h = maxY - minY;
-        const scale = Math.min(DRAW_SIZE / w, DRAW_SIZE / h) * .85;
+        const { minX, minY, w, h, scale } = _horseFit();
         // clip FIRST, in DRAW_SIZE space (before the SVG-space transform below),
         // keeping only the requested half of the tile around the centerline
         ctx.save();
         ctx.beginPath();
-        if (left) ctx.rect(0, 0, DRAW_SIZE / 2, DRAW_SIZE);
-        else      ctx.rect(DRAW_SIZE / 2, 0, DRAW_SIZE / 2, DRAW_SIZE);
+        if (left) ctx.rect(0, 0, DRAW_SIZE / 2 + JOINT_OVERLAP, DRAW_SIZE);
+        else      ctx.rect(DRAW_SIZE / 2 - JOINT_OVERLAP, 0,
+                           DRAW_SIZE / 2 + JOINT_OVERLAP, DRAW_SIZE);
         ctx.clip();
         ctx.translate((DRAW_SIZE - w * scale) / 2 - minX * scale,
                       (DRAW_SIZE - h * scale) / 2 - minY * scale);
@@ -387,7 +418,7 @@ class HorseSegment extends Box2dObject
         if (this.drawGlow)
         {
             const glow = this.color.withAlpha(.4);
-            drawTile(this.pos, vec2(BALL_RADIUS*4), icons.glow, glow);
+            drawTile(this.pos, vec2(HORSE_BALL_SIZE*1.3), icons.glow, glow);
         }
         drawTile(this.pos, vec2(HORSE_BALL_SIZE), this.icon, this.color, this.angle);
     }
@@ -411,6 +442,7 @@ class PlinkoBall
         this.scoreColor = null;
         this.cleanupTimer = null;
         this.pegSoundCooldown = new Timer();
+        this.despawnTimer = new Timer(STUCK_TIMEOUT);
 
         // revolute joint pinning both halves around the horse's centre (both
         // half-origins are the cut = the pivot, so the anchor is this pos)
@@ -529,7 +561,7 @@ function dropBall()
 
     const x = clamp(aimX, -BOARD_WIDTH/2 + 1, BOARD_WIDTH/2 - 1);
     const ball = new PlinkoBall(
-        vec2(x, DROP_LINE_Y + 2.5),
+        vec2(x, DROP_LINE_Y + 5),
         BALL_COLORS[dropCount % BALL_COLORS.length]);
     // tiny random nudge so identical drops don't always go the same place
     ball.setLinearVelocity(vec2(rand(-.5, .5), 0));
@@ -579,6 +611,25 @@ function checkScoring()
 
             // flagged to explode — pops within the next second
             b.cleanupTimer = new Timer(rand(.4, .9));
+        }
+
+        // stuck on the board too long without scoring — fizzle out silently
+        if (!b.scored && b.despawnTimer.elapsed())
+        {
+            // faint puff in the ball's color so it doesn't feel like a glitch
+            for (let k = 6; k--;)
+                scorePops.push({
+                    pos:     b.pos.copy(),
+                    value:   '',
+                    life:    .3,
+                    maxLife: .3,
+                    vel:     randVec2(rand(.04, .15)),
+                    color:   b.color.withAlpha(.7),
+                    size:    rand(.22, .4),
+                });
+            if (!b.destroyed) b.destroy();
+            balls.splice(i, 1);
+            continue;
         }
 
         // fuse burned out — explode, shove nearby balls, and remove it
@@ -747,6 +798,7 @@ async function gameInit()
     icons = initDefaultAtlas();
     icons.horseLeft  = drawHorseHalfTexture(16, true,  'horse left half');
     icons.horseRight = drawHorseHalfTexture(17, false, 'horse right half');
+    icons.horseFull  = drawHorseFullTexture(18, 'horse whole');
 
     setSoundVolume(.7);
     installAutoPause();
@@ -883,13 +935,11 @@ function gameRender()
     // Aim guide — dotted line + ball preview at top of the board.
     const aimClamped = clamp(aimX, -BOARD_WIDTH/2 + 1, BOARD_WIDTH/2 - 1);
     const a = .35 + .2 * sin(time * 4);
-    drawLine(vec2(aimClamped - 0.25, DROP_LINE_Y + 1),
-             vec2(aimClamped - 0.25, DROP_LINE_Y - 1),
+    drawLine(vec2(aimClamped - 0.25, DROP_LINE_Y + 3),
+             vec2(aimClamped - 0.25, DROP_LINE_Y),
              .12, hsl(.13, .9, .7, a));
-    drawTile(vec2(aimClamped, DROP_LINE_Y + 2.5),
-        vec2(HORSE_BALL_SIZE), icons.horseLeft,  hsl(.13, .9, .7, .7));
-    drawTile(vec2(aimClamped, DROP_LINE_Y + 2.5),
-        vec2(HORSE_BALL_SIZE), icons.horseRight, hsl(.13, .9, .7, .7));
+    drawTile(vec2(aimClamped, DROP_LINE_Y + 5),
+        vec2(HORSE_BALL_SIZE), icons.horseFull, hsl(.13, .9, .7, .7));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
