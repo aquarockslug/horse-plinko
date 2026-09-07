@@ -49,7 +49,7 @@ const HORSE_BALL_SIZE = BALL_RADIUS * 8; // horse sprite + physics foot-print
 const STUCK_TIMEOUT   = 15; // despawn unscored balls stuck on the board this long
 const DROP_LINE_Y    = BOARD_HEIGHT/2 - 6;
 const FLOOR_Y        = -BOARD_HEIGHT/2 - 2.5;
-const SLOT_TOP_Y     = FLOOR_Y + 3;
+const SLOT_TOP_Y     = FLOOR_Y + 3.5;
 const SLOT_VALUES    = [ 20, 50, 100, 50, 20 ]; // center = high
 const SLOT_COLORS    = SLOT_VALUES.map(v =>
     v >= 100 ? hsl(.13, .9, .55)   // golden center
