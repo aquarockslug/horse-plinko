@@ -895,7 +895,7 @@ function gameUpdate()
         aimX = mousePos.x;
     else
         aimX += clamp(keyDirection().x + gamepadStick(0).x, -1, 1) * .35;
-    aimX = clamp(aimX, -BOARD_WIDTH/2 + 1, BOARD_WIDTH/2 - 1);
+    aimX = clamp(aimX, -BOARD_WIDTH/2 + 2.5, BOARD_WIDTH/2 - 2.5);
 
     if (mouseWasPressed(0) || keyWasPressed('Space') || gamepadWasPressed(0))
         dropBall();
