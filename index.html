@@ -8,16 +8,16 @@
     src: url('HanaleiFill-Regular.ttf') format('truetype');
 }
 #littlejs-menus {
-    --menu-bg:           rgba(66, 38, 12, 0.93);
-    --menu-fg:           #f6e7c6;
-    --menu-accent:       #ffd23f;
-    --menu-item-bg:      rgba(120, 72, 26, 0.45);
-    --menu-item-hover-bg: rgba(190, 120, 40, 0.55);
-    --menu-title-size:   2.4em;
-    --menu-item-size:    1.45em;
-    --menu-base-size:    clamp(20px, 2.6vmin, 24px);
+    --menu-bg: rgba(66, 38, 12, .93);
+    --menu-fg: #f6e7c6;
+    --menu-accent: #ffd23f;
+    --menu-item-bg: rgba(120, 72, 26, .45);
+    --menu-item-hover-bg: rgba(190, 120, 40, .55);
+    --menu-title-size: 2.4em;
+    --menu-item-size: 1.45em;
+    --menu-base-size: clamp(20px, 2.6vmin, 24px);
     --menu-border-width: 3px;
-    --menu-font:         'HanaleiFill', sans-serif;
+    --menu-font: 'HanaleiFill', sans-serif;
 }
 </style>
 </head>
@@ -33,98 +33,64 @@
 cameraPos = vec2(0, 2.5);
 canvasFixedSize = vec2(700, 1080);
 
-///////////////////////////////////////////////////////////////////////////////
-// Board layout (world units, y is up)
-const BOARD_WIDTH    = 22;
-const BOARD_HEIGHT   = 23;
-const PEG_ROWS       = 4;
-const PEG_COLS_TOP   = 2;          // pegs in top row
-const PEG_RADIUS     = 0.33;
-const PEG_SPACING    = 4;        // distance between peg centers
-const SLOT_COUNT     = 5;
-const START_BALLS    = 10;         // balls you begin a run with
-const BALL_PER_BONUS = 100;        // earn +1 ball for every this many points
-const BALL_RADIUS    = 0.55;
-const HORSE_BALL_SIZE = BALL_RADIUS * 8; // horse sprite + physics foot-print
-const STUCK_TIMEOUT   = 15; // despawn unscored balls stuck on the board this long
-const DROP_LINE_Y    = BOARD_HEIGHT/2 - 6;
-const FLOOR_Y        = -BOARD_HEIGHT/2 - 2.5;
-const SLOT_TOP_Y     = FLOOR_Y + 3.5;
-const SLOT_VALUES    = [ 20, 50, 100, 50, 20 ]; // center = high
-const SLOT_COLORS    = SLOT_VALUES.map(v =>
-    v >= 100 ? hsl(.13, .9, .55)   // golden center
-  : v >=  50 ? hsl(0,  .72, .42)   // barn red
-  :            hsl(.12, .62, .38));// hay / dirt
-const BALL_COLORS    = [
+// board layout (world units, y up)
+const BOARD_WIDTH    = 22,
+      BOARD_HEIGHT   = 23,
+      PEG_ROWS       = 4,
+      PEG_COLS_TOP   = 2,
+      PEG_RADIUS     = .33,
+      PEG_SPACING    = 4,
+      SLOT_COUNT     = 5,
+      START_BALLS    = 10,
+      BALL_PER_BONUS = 100,
+      BALL_RADIUS    = .55,
+      HORSE_BALL_SIZE = BALL_RADIUS * 8,   // horse sprite + physics footprint
+      STUCK_TIMEOUT   = 15,                 // despawn stuck balls after this long
+      DROP_LINE_Y     = BOARD_HEIGHT/2 - 6,
+      FLOOR_Y         = -BOARD_HEIGHT/2 - 2.5,
+      SLOT_TOP_Y      = FLOOR_Y + 3.5;
+const SLOT_VALUES = [20, 50, 100, 50, 20]; // center = high
+const SLOT_COLORS = SLOT_VALUES.map(v =>
+    v >= 100 ? hsl(.13, .9, .55) : v >= 50 ? hsl(0, .72, .42) : hsl(.12, .62, .38));
+const BALL_COLORS = [
     hsl(.01, .82, .55), hsl(.07, .82, .55), hsl(.12, .88, .6),
     hsl(.30, .75, .42), hsl(.55, .78, .52), hsl(.09, .5, .38),
 ];
 
-///////////////////////////////////////////////////////////////////////////////
-// Game state
-let score          = 0;
-let dropCount      = 0;
-let bonusBalls     = 0;           // extra balls earned from score milestones
-let runOver        = false;
-let aimX           = 0;
-let dropCooldown   = new Timer();
-let pegs           = [];          // Box2dStaticObject[]
-let slots          = [];          // {x, value, flashTimer}
-let balls          = [];          // PlinkoBall[]
-let scorePops      = [];          // {pos, value, life, color}
-let icons          = {};          // name -> TileInfo, from initDefaultAtlas()
+// game state
+let score = 0, dropCount = 0, bonusBalls = 0, runOver = false, aimX = 0,
+    dropCooldown = new Timer(),
+    pegs = [],      // Box2dStaticObject[]
+    slots = [],     // {x, value, flashTimer}
+    balls = [],     // PlinkoBall[]
+    scorePops = [], // {pos, value, life, color}
+    icons = {};     // name -> TileInfo
 
-///////////////////////////////////////////////////////////////////////////////
-// Sounds
+// sounds
 let sndPeg, sndDrop, sndScore, sndBig, sndAngry;
-
 function initSounds()
 {
     sndAngry = new Sound('horse_angry.ogx');
-    sndPeg = new SoundGenerator({
-        volume: .3, frequency: 600, attack: .002, release: .07,
-        shapeCurve: 1, randomness: .15, slide: -2,
-    });
-    sndDrop = new SoundGenerator({
-        volume: .4, frequency: 220, attack: .002, release: .12,
-        shapeCurve: 1.5, slide: 4,
-    });
-    sndScore = new SoundGenerator({
-        volume: .3, frequency: 520, attack: .005, release: .22,
-        shapeCurve: 1.2,
-    });
-    sndBig = new SoundGenerator({
-        volume: .5, frequency: 520, attack: .005, release: .4,
-        shapeCurve: 1.2, pitchJump: 260, pitchJumpTime: .12,
-    });
+    sndPeg = new SoundGenerator({volume: .3, frequency: 600, attack: .002, release: .07, shapeCurve: 1, randomness: .15, slide: -2});
+    sndDrop = new SoundGenerator({volume: .4, frequency: 220, attack: .002, release: .12, shapeCurve: 1.5, slide: 4});
+    sndScore = new SoundGenerator({volume: .3, frequency: 520, attack: .005, release: .22, shapeCurve: 1.2});
+    sndBig = new SoundGenerator({volume: .5, frequency: 520, attack: .005, release: .4, shapeCurve: 1.2, pitchJump: 260, pitchJumpTime: .12});
 }
 
-// Bake the horse silhouette from horse.svg into a spare atlas tile so the
-// ball can render as a tiny horse instead of a plain circle.
-// How far (in DRAW_SIZE px) each half's silhouette hangs past the centreline,
-// so the two halves overlap around the joint instead of meeting at hairline.
-// Hidden at rest, keeps the halves looking connected while they pivot.
+// overlapping half-silhouettes keep the horse connected while the halves pivot
 const JOINT_OVERLAP = 48;
 
 const HORSE_SVG_PATH =
-    'M684,131 L705,111 L703,134 L720,112 L714,147 L737,171 L749,212 L784,267 '+
-    'L769,297 L741,302 L725,271 L692,249 L678,248 L657,237 L635,298 L635,319 '+
-    'L620,345 L616,410 L608,448 L588,474 L578,513 L566,547 L560,584 L548,616 '+
-    'L545,657 L547,694 L579,718 L579,730 L547,731 L542,725 L542,715 L534,706 '+
-    'L524,606 L513,633 L513,687 L521,705 L533,715 L536,725 L501,727 L498,706 '+
-    'L490,699 L493,626 L500,576 L500,485 L496,478 L360,474 L307,456 L263,434 '+
-    'L234,481 L214,548 L212,619 L228,664 L228,675 L256,701 L261,712 L255,717 '+
-    'L229,715 L223,711 L214,685 L201,677 L195,626 L185,578 L172,559 L171,531 '+
-    'L177,513 L141,545 L111,594 L107,635 L106,678 L126,700 L140,722 L139,728 '+
-    'L120,732 L96,721 L96,699 L79,690 L80,676 L90,641 L90,546 L124,499 L127,460 '+
-    'L111,411 L102,368 L107,335 L120,308 L118,301 L111,301 L97,330 L92,460 L89,514 '+
-    'L79,562 L70,592 L63,601 L62,581 L58,609 L48,605 L44,582 L39,596 L38,562 '+
-    'L34,577 L26,563 L25,542 L24,390 L33,351 L38,329 L39,318 L60,295 L89,280 '+
-    'L126,276 L145,273 L181,264 L271,264 L329,280 L398,282 L482,265 L532,214 '+
+    'M684,131 L705,111 L703,134 L720,112 L714,147 L737,171 L749,212 L784,267 L769,297 L741,302 L725,271 L692,249 L678,248 L657,237 L635,298 L635,319 '+
+    'L620,345 L616,410 L608,448 L588,474 L578,513 L566,547 L560,584 L548,616 L545,657 L547,694 L579,718 L579,730 L547,731 L542,725 L542,715 L534,706 '+
+    'L524,606 L513,633 L513,687 L521,705 L533,715 L536,725 L501,727 L498,706 L490,699 L493,626 L500,576 L500,485 L496,478 L360,474 L307,456 L263,434 '+
+    'L234,481 L214,548 L212,619 L228,664 L228,675 L256,701 L261,712 L255,717 L229,715 L223,711 L214,685 L201,677 L195,626 L185,578 L172,559 L171,531 '+
+    'L177,513 L141,545 L111,594 L107,635 L106,678 L126,700 L140,722 L139,728 L120,732 L96,721 L96,699 L79,690 L80,676 L90,641 L90,546 L124,499 L127,460 '+
+    'L111,411 L102,368 L107,335 L120,308 L118,301 L111,301 L97,330 L92,460 L89,514 L79,562 L70,592 L63,601 L62,581 L58,609 L48,605 L44,582 L39,596 L38,562 '+
+    'L34,577 L26,563 L25,542 L24,390 L33,351 L38,329 L39,318 L60,295 L89,280 L126,276 L145,273 L181,264 L271,264 L329,280 L398,282 L482,265 L532,214 '+
     'L576,167 L624,141 L666,133z';
 
-// Shared SVG-space fit for the horse path: its pixel bbox and the scale that
-// centers the full silhouette in DRAW_SIZE space with a little margin.
+// SVG-space fit so the silhouette centers in DRAW_SIZE with a little margin
 function _horseFit()
 {
     const nums = HORSE_SVG_PATH.match(/-?\d+(\.\d+)?/g).map(Number);
@@ -140,8 +106,7 @@ function _horseFit()
     return { minX, minY, w, h, scale: Math.min(DRAW_SIZE / w, DRAW_SIZE / h) * .85 };
 }
 
-// Draw the whole horse into a tile (used for the translucent aim preview — a
-// single quad so the silhouette is one uniform tint with no overlap band).
+// whole horse tile — the translucent aim preview
 function drawHorseFullTexture(tileIndex, description)
 {
     return drawToTexture(tileIndex, ctx =>
@@ -155,27 +120,17 @@ function drawHorseFullTexture(tileIndex, description)
     }, description);
 }
 
-// Draw one half of the horse path (pure white, so it tints per-instance) into
-// a tile. The horse is centered so its vertical centerline lands on the tile's
-// horizontal center — i.e. the future joint — so clipping to the left/right
-// half of the tile leaves the cut edge near tile-center. Each half overhangs
-// the centerline by JOINT_OVERLAP px, so the two silhouettes overlap around the
-// pivot instead of meeting at a hairline. At rest the overhang is completely
-// hidden (each half paints exactly the mate's region), and while the halves
-// flap around the revolute joint there is always horse material covering the
-// pivot, so the connection reads as seamless rather than a clean split.
+// one half of the horse — clip to the left/right of the tile centerline, with
+// each side overhanging the joint so the halves overlap around the pivot
 function drawHorseHalfTexture(tileIndex, left, description)
 {
     return drawToTexture(tileIndex, ctx =>
     {
         const { minX, minY, w, h, scale } = _horseFit();
-        // clip FIRST, in DRAW_SIZE space (before the SVG-space transform below),
-        // keeping only the requested half of the tile around the centerline
         ctx.save();
         ctx.beginPath();
         if (left) ctx.rect(0, 0, DRAW_SIZE / 2 + JOINT_OVERLAP, DRAW_SIZE);
-        else      ctx.rect(DRAW_SIZE / 2 - JOINT_OVERLAP, 0,
-                           DRAW_SIZE / 2 + JOINT_OVERLAP, DRAW_SIZE);
+        else ctx.rect(DRAW_SIZE / 2 - JOINT_OVERLAP, 0, DRAW_SIZE / 2 + JOINT_OVERLAP, DRAW_SIZE);
         ctx.clip();
         ctx.translate((DRAW_SIZE - w * scale) / 2 - minX * scale,
                       (DRAW_SIZE - h * scale) / 2 - minY * scale);
@@ -186,13 +141,7 @@ function drawHorseHalfTexture(tileIndex, left, description)
     }, description);
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Horse physics body — the outline above is concave, but Box2D fixtures must
-// be convex with at most 8 vertices. Decompose the silhouette into convex
-// pieces once (ear-clip triangulation + greedy convex merge) so the ball
-// tumbles through the pegs as an actual horse, not a circle.
-
-// signed area (CCW > 0)
+// Box2D fixtures must be convex (<=8 verts), so decompose the concave outline once
 function _polyArea(pts)
 {
     let a = 0;
@@ -204,21 +153,15 @@ function _polyArea(pts)
     return a / 2;
 }
 
-// cross product z of (a->b) x (a->c); > 0 => CCW left turn
-function _turn(a, b, c)
-{
-    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
+function _turn(a, b, c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
 
-// strictly-inside test (boundary/collinear points don't count, so collinear
-// polygon edges triangulate cleanly)
 function _inTri(p, a, b, c)
 {
     const d1 = _turn(a, b, p), d2 = _turn(b, c, p), d3 = _turn(c, a, p), e = 1e-6;
     return (d1 > e && d2 > e && d3 > e) || (d1 < -e && d2 < -e && d3 < -e);
 }
 
-// ear-clip triangulation of a simple CCW polygon; returns tri vertex-index lists
+// ear-clip triangulation of a simple CCW polygon -> tri index lists
 function _earClip(pts)
 {
     const tris = [], ring = pts.map((u, i) => i);
@@ -231,7 +174,7 @@ function _earClip(pts)
         {
             const i0 = ring[(k - 1 + n) % n], i1 = ring[k], i2 = ring[(k + 1) % n];
             const a = pts[i0], b = pts[i1], c = pts[i2];
-            if (_turn(a, b, c) <= 0) continue;          // reflex, not an ear
+            if (_turn(a, b, c) <= 0) continue;
             let clear = true;
             for (let m = 0; m < n; m++)
             {
@@ -245,15 +188,13 @@ function _earClip(pts)
             clipped = true;
             break;
         }
-        // defensive fallback for degenerate input — push what's left as one piece
-        if (!clipped) break;
+        if (!clipped) break; // degenerate input — keep the remainder as one piece
     }
-    if (ring.length === 3) tris.push([ring[0], ring[1], ring[2]]);
-    else if (ring.length > 3) tris.push(ring.slice()); // convex leftover
+    if (ring.length >= 3) tris.push(ring.slice());
     return tris;
 }
 
-// greedy-merge adjacent triangles into convex pieces (<=8 vertices for Box2D)
+// greedy-merge adjacent triangles into convex pieces (<=8 verts for Box2D)
 function _decomposeConvex(pts, tris)
 {
     const pieces = tris.map(t => t.slice());
@@ -274,8 +215,8 @@ function _decomposeConvex(pts, tris)
                 for (let l = 0; l < B.length; l++)
                     if (B[l] === bA && B[(l + 1) % B.length] === aA) { u = aA; v = bA; break; }
             }
-            if (u < 0) continue;                          // no shared edge
-            const pK = A.indexOf(u), qK = B.indexOf(v);   // A: ...u v..., B: ...v u...
+            if (u < 0) continue;
+            const pK = A.indexOf(u), qK = B.indexOf(v);
             const merged = [];
             for (let k = 0; k <= pK; k++) merged.push(A[k]);
             for (let k = 2; k < B.length; k++) merged.push(B[(qK + k) % B.length]);
@@ -288,7 +229,6 @@ function _decomposeConvex(pts, tris)
                 if (_turn(a, b, c) < -1e-4) { convex = false; break; }
             }
             if (!convex) continue;
-            // only a true partition merge passes: area(merged) == area(A)+area(B)
             const mA = _polyArea(A.map(i => pts[i])), mB = _polyArea(B.map(i => pts[i])),
                   mM = _polyArea(merged.map(i => pts[i]));
             if (Math.abs(mM - (mA + mB)) > 1e-6) continue;
@@ -301,8 +241,7 @@ function _decomposeConvex(pts, tris)
     return pieces;
 }
 
-// Sutherland-Hodgman clip a polygon to a half-plane (x <= 0 for left, x >= 0
-// for right). Returns the clipped polygon as a list of vec2 points.
+// Sutherland-Hodgman clip to x<=0 (left) or x>=0 (right)
 function _clipHalfPlane(pts, keepLeft)
 {
     if (!pts.length) return [];
@@ -312,14 +251,15 @@ function _clipHalfPlane(pts, keepLeft)
         const cur = pts[i], nxt = pts[(i + 1) % n];
         const cIn = keepLeft ? cur.x <= 0 : cur.x >= 0;
         const nIn = keepLeft ? nxt.x <= 0 : nxt.x >= 0;
-        if (cIn && nIn)               out.push(nxt);
-        else if (cIn && !nIn)         out.push(vec2(0, cur.y + (nxt.y - cur.y) * (-cur.x) / (nxt.x - cur.x)));
-        else if (!cIn && nIn) { out.push(vec2(0, cur.y + (nxt.y - cur.y) * (-cur.x) / (nxt.x - cur.x))); out.push(nxt); }
+        const ix = vec2(0, cur.y + (nxt.y - cur.y) * (-cur.x) / (nxt.x - cur.x));
+        if (cIn && nIn)           out.push(nxt);
+        else if (cIn && !nIn)     out.push(ix);
+        else if (!cIn && nIn)     out.push(ix, nxt);
     }
     return out;
 }
 
-// Shared parser — horse.svg path → centered, scaled, y-up vertices.
+// parse horse.svg path -> centered, scaled, y-up, CCW vertices
 function _horseParsedPts()
 {
     const nums = HORSE_SVG_PATH.match(/-?\d+(\.\d+)?/g).map(Number);
@@ -336,107 +276,71 @@ function _horseParsedPts()
     const s = HORSE_BALL_SIZE * Math.min(DRAW_SIZE / w, DRAW_SIZE / h) * .85 / DRAW_SIZE;
     const cx = minX + w / 2;
     pts = pts.map(p => vec2((p.x - cx) * s, -(p.y - minY - h / 2) * s)); // SVG is y-down
-    if (_polyArea(pts) < 0) pts.reverse();                              // Box2D wants CCW
+    if (_polyArea(pts) < 0) pts.reverse();                               // Box2D wants CCW
     return pts;
 }
 
-// Decompose a polygon into Box2D-compatible convex fixtures.
 function _toPhysicsFixtures(pts)
 {
-    const pieces = _decomposeConvex(pts, _earClip(pts)).filter(p =>
-        Math.abs(_polyArea(p.map(i => pts[i]))) > 5e-5);
-    return pieces.map(p => p.map(i => pts[i]));
+    return _decomposeConvex(pts, _earClip(pts))
+        .filter(p => Math.abs(_polyArea(p.map(i => pts[i]))) > 5e-5)
+        .map(p => p.map(i => pts[i]));
 }
 
-// Split horse into left / right halves at the vertical center (x = 0).
+// split the horse into left/right halves at the vertical centerline
 const HORSE_PHYSICS_LEFT  = _toPhysicsFixtures(_clipHalfPlane(_horseParsedPts(), true));
 const HORSE_PHYSICS_RIGHT = _toPhysicsFixtures(_clipHalfPlane(_horseParsedPts(), false));
 
-// One independently-swinging half of the horse (left or right). Rendered & synced
-// by the engine like any Box2dObject; glued to its sibling by a revolute joint at
-// the centre so each half pivots around the horse's middle.
+// one independently-swinging half; two are pinned by a revolute joint at the center
 class HorseSegment extends Box2dObject
 {
     constructor(pos, color, physics, icon, drawGlow, ballRef)
     {
         super(pos, vec2(BALL_RADIUS*2), undefined, 0, color);
-        // horse-shaped half body — one Box2D fixture per convex piece
-        for (const poly of physics)
-            this.addPoly(poly, 1, .1, .55);
+        for (const poly of physics) this.addPoly(poly, 1, .1, .55);
         this.body.SetLinearDamping(0.05);
-        this.body.SetBullet(true); // continuous collision so fast balls
-                                   // can't tunnel through pegs
+        this.body.SetBullet(true); // continuous collision, no tunneling
         this.icon = icon;
         this.drawGlow = drawGlow;
-        this.ballRef = ballRef; // owning PlinkoBall, so the two halves never
-                                // "hit" each other at the joint
+        this.ballRef = ballRef;    // owning PlinkoBall, so halves don't hit each other
         this.lineColor = hsl(0, 0, 0, .6);
         this.lineWidth = .08;
     }
 
     beginContact(other)
     {
-        if (other && other.ballRef === this.ballRef) return; // own other half
-        if (other && other.isPeg)
+        if (other && other.isPeg && other.ballRef !== this.ballRef)
         {
             const speed = this.getLinearVelocity().length();
-
-            // skip soft taps and per-ball-throttle so a single ball can't
-            // spam the speakers when it nestles between two pegs
             if (speed > 2.5 && !this.ballRef.pegSoundCooldown.active())
             {
-                const pitch = clamp(.7 + speed * .03, .7, 1.6);
-                const vol   = clamp(.05 + speed * .02, .15, .55);
-                sndPeg.play(this.pos, vol, pitch);
+                sndPeg.play(this.pos, clamp(.05 + speed * .02, .15, .55),
+                            clamp(.7 + speed * .03, .7, 1.6));
                 this.ballRef.pegSoundCooldown.set(.05);
             }
-
-            // brief peg flash (always — visual feedback is fine even on soft hits)
-            other.flashTimer.set(.18);
-
-            // tiny burst of sparks
-            for (let i = 4; i--;)
-            {
-                scorePops.push({
-                    pos:   this.pos.copy(),
-                    value: '',
-                    life:  .35,
-                    maxLife: .35,
-                    vel:   randVec2(rand(.05, .15)),
-                    color: hsl(rand(.1, .15), 1, .8),
-                    size:  .25,
-                });
-            }
+            other.flashTimer.set(.18); // peg flash
+            for (let i = 4; i--;)      // spark burst
+                scorePops.push({ pos: this.pos.copy(), value: '', life: .35, maxLife: .35,
+                    vel: randVec2(rand(.05, .15)), color: hsl(rand(.1, .15), 1, .8), size: .25 });
         }
     }
 
     render()
     {
-        // soft glow behind the whole horse (drawn once, from the left half's
-        // position = the joint centre); the half silhouette on top, rotating
-        // independently with this half's angle.
         if (this.drawGlow)
-        {
-            const glow = this.color.withAlpha(.4);
-            drawTile(this.pos, vec2(HORSE_BALL_SIZE*1.3), icons.glow, glow);
-        }
+            drawTile(this.pos, vec2(HORSE_BALL_SIZE*1.3), icons.glow, this.color.withAlpha(.4));
         drawTile(this.pos, vec2(HORSE_BALL_SIZE), this.icon, this.color, this.angle);
     }
 }
 
-// A "ball" is the pair of horse halves pinned at the centre by a revolute joint.
-// A plain container (not an EngineObject) so collision/render/scoring treats the
-// pair as one unit; the joint keeps both half-origins on the pivot, so this.pos
-// is always the horse's centre.
+// a "ball" is the pair of halves pinned by a joint; this container treats them as one unit
 class PlinkoBall
 {
     constructor(pos, color)
     {
         this.color = color;
-        this.left  = new HorseSegment(pos, color, HORSE_PHYSICS_LEFT,
-                                      icons.horseLeft, true, this);
-        this.right = new HorseSegment(pos, color, HORSE_PHYSICS_RIGHT,
-                                      icons.horseRight, false, this);
+        this.left = new HorseSegment(pos, color, HORSE_PHYSICS_LEFT, icons.horseLeft, true, this);
+        this.right = new HorseSegment(pos, color, HORSE_PHYSICS_RIGHT, icons.horseRight, false, this);
         this.destroyed = false;
         this.scored = false;
         this.scoreColor = null;
@@ -444,72 +348,56 @@ class PlinkoBall
         this.pegSoundCooldown = new Timer();
         this.despawnTimer = new Timer(STUCK_TIMEOUT);
 
-        // revolute joint pinning both halves around the horse's centre (both
-        // half-origins are the cut = the pivot, so the anchor is this pos)
         const jointDef = new box2d.instance.b2RevoluteJointDef();
         jointDef.Initialize(this.left.body, this.right.body, box2d.vec2dTo(pos));
         this.joint = box2d.world.CreateJoint(jointDef);
     }
 
     get pos() { return this.left.pos; }
-
     getLinearVelocity() { return this.left.getLinearVelocity(); }
-    setLinearVelocity(v)
-    {
-        this.left.setLinearVelocity(v);
-        this.right.setLinearVelocity(v);
-    }
+    setLinearVelocity(v) { this.left.setLinearVelocity(v); this.right.setLinearVelocity(v); }
 
     destroy()
     {
         if (this.destroyed) return;
         if (this.joint) { box2d.world.DestroyJoint(this.joint); this.joint = null; }
-        if (!this.left.destroyed)  this.left.destroy();
+        if (!this.left.destroyed) this.left.destroy();
         if (!this.right.destroyed) this.right.destroy();
         this.destroyed = true;
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Build the pegs, walls, slot dividers, and floor.
 function buildBoard()
 {
-    // clear previous
-    pegs.forEach(p => p.destroy());
+    pegs.forEach(p => { p.destroy(); });
     pegs = [];
     slots = [];
 
-    // Outer walls (one big static body with three edges)
+    // walls (one static body, three edges)
     const walls = new Box2dStaticObject(vec2(0, 0));
-    walls.color = hsl(.09, .5, .18);   // barn wood
+    walls.color = hsl(.09, .5, .18);
     walls.lineColor = hsl(.13, .9, .5);
     walls.lineWidth = .12;
-    const left  = -BOARD_WIDTH/2;
-    const right =  BOARD_WIDTH/2;
-    const top   =  BOARD_HEIGHT/2;
-    const bot   =  FLOOR_Y;
-    walls.addEdge(vec2(left,  top), vec2(left,  bot), 0, .2, .3);
+    const left = -BOARD_WIDTH/2, right = BOARD_WIDTH/2, top = BOARD_HEIGHT/2, bot = FLOOR_Y;
+    walls.addEdge(vec2(left, top), vec2(left, bot), 0, .2, .3);
     walls.addEdge(vec2(right, top), vec2(right, bot), 0, .2, .3);
-    walls.addEdge(vec2(left,  bot), vec2(right, bot), 0, .2, .3);
+    walls.addEdge(vec2(left, bot), vec2(right, bot), 0, .2, .3);
     pegs.push(walls);
 
-    // Pegs in a triangular grid (each row +1 peg, alternating offset)
+    // pegs in a triangular grid, each row +1 pegs, alternating offset
     for (let row = 0; row < PEG_ROWS; row++)
     {
         const y = DROP_LINE_Y - 2.5 - row * PEG_SPACING * .9;
         if (y < SLOT_TOP_Y + 1.2) break; // leave room above slots
         const colsInRow = PEG_COLS_TOP + row;
-        const totalW = (colsInRow - 1) * PEG_SPACING;
-        const startX = -totalW / 2;
+        const startX = -(colsInRow - 1) * PEG_SPACING / 2;
         for (let c = 0; c < colsInRow; c++)
         {
             const x = startX + c * PEG_SPACING;
             if (x < left + .8 || x > right - .8) continue;
             const peg = new Box2dStaticObject(vec2(x, y));
             peg.color = hsl(.12, .85, .6);
-            // render as a tinted circle sprite (Box2dObject draws its tile when
-            // tileInfo is set; the fixture below still handles collision)
-            peg.tileInfo = icons.circle;
+            peg.tileInfo = icons.circle;    // tinted sprite; fixture below still collides
             peg.size = vec2(PEG_RADIUS*2.3);
             peg.addCircle(PEG_RADIUS*2, vec2(), 0, .05, .65);
             peg.isPeg = true;
@@ -518,121 +406,78 @@ function buildBoard()
         }
     }
 
-    // Slot dividers (vertical walls between slots)
+    // slot dividers + logical scoring zones
     const slotWidth = BOARD_WIDTH / SLOT_COUNT;
     for (let i = 0; i <= SLOT_COUNT; i++)
     {
-        const x = left + i * slotWidth;
-        const divider = new Box2dStaticObject(vec2(x, SLOT_TOP_Y - 1.5));
+        const divider = new Box2dStaticObject(vec2(left + i * slotWidth, SLOT_TOP_Y - 1.5));
         divider.color = hsl(.09, .55, .28);
         divider.lineColor = hsl(.09, .6, .16);
         divider.addBox(vec2(.25, 3));
         pegs.push(divider);
     }
-
-    // Slot scoring zones (logical only — the floor catches the ball)
     for (let i = 0; i < SLOT_COUNT; i++)
-    {
-        const x = left + slotWidth * (i + .5);
         slots.push({
-            x:          x,
-            width:      slotWidth - .3,
-            value:      SLOT_VALUES[i],
-            color:      SLOT_COLORS[i],
+            x: left + slotWidth * (i + .5),
+            width: slotWidth - .3,
+            value: SLOT_VALUES[i],
+            color: SLOT_COLORS[i],
             flashTimer: new Timer(),
         });
-    }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Balls still available to drop: starting stock + earned bonuses - used.
-function ballsRemaining()
-{
-    return START_BALLS + bonusBalls - dropCount;
-}
+function ballsRemaining() { return START_BALLS + bonusBalls - dropCount; }
 
-///////////////////////////////////////////////////////////////////////////////
-// Drop a ball at the current aim position.
 function dropBall()
 {
-    if (dropCooldown.active()) return;
-    if (ballsRemaining() <= 0) return; // out of balls
+    if (dropCooldown.active() || ballsRemaining() <= 0) return;
     dropCooldown.set(.25);
 
     const x = clamp(aimX, -BOARD_WIDTH/2 + 1, BOARD_WIDTH/2 - 1);
-    const ball = new PlinkoBall(
-        vec2(x, DROP_LINE_Y + 5),
-        BALL_COLORS[dropCount % BALL_COLORS.length]);
-    // tiny random nudge so identical drops don't always go the same place
-    ball.setLinearVelocity(vec2(rand(-.5, .5), 0));
+    const ball = new PlinkoBall(vec2(x, DROP_LINE_Y + 5), BALL_COLORS[dropCount % BALL_COLORS.length]);
+    ball.setLinearVelocity(vec2(rand(-.5, .5), 0)); // random nudge so drops differ
     balls.push(ball);
     dropCount++;
     sndDrop.play(vec2(x, DROP_LINE_Y + 2.5), .6, 1 + rand(-.05, .05));
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Check each ball — when it falls past the slot tops, score it & remove it.
 function checkScoring()
 {
+    const slotWidth = BOARD_WIDTH / SLOT_COUNT;
     for (let i = balls.length; i--;)
     {
         const b = balls[i];
         if (b.destroyed) { balls.splice(i, 1); continue; }
 
-        // ball reached the bottom — score it ONCE, find which slot it landed in
+        // reached the bottom — score once in the slot it landed in
         if (!b.scored && b.pos.y < SLOT_TOP_Y - 1.5)
         {
-            const slotWidth = BOARD_WIDTH / SLOT_COUNT;
-            const idx = clamp(
-                floor((b.pos.x + BOARD_WIDTH/2) / slotWidth),
-                0, SLOT_COUNT - 1);
+            const idx = clamp(floor((b.pos.x + BOARD_WIDTH/2) / slotWidth), 0, SLOT_COUNT - 1);
             const slot = slots[idx];
             score += slot.value;
             slot.flashTimer.set(.6);
             b.scored = true;
             b.scoreColor = slot.color;
-
-            // popup text
-            scorePops.push({
-                pos:     vec2(slot.x, SLOT_TOP_Y - 1),
-                value:   '+' + slot.value,
-                life:    1.2,
-                maxLife: 1.2,
-                vel:     vec2(0, .04),
-                color:   slot.color,
-                size:    1.9,
-            });
-
-            // sound — bigger sound for jackpot slots, gentler pitch curve
-            if (slot.value >= 100)
-                sndBig.play(b.pos, .7, 1);
-            else
-                sndScore.play(b.pos, .55, .85 + (slot.value/100) * .5);
-
-            // flagged to explode — pops within the next second
-            b.cleanupTimer = new Timer(rand(.4, .9));
+            scorePops.push({ pos: vec2(slot.x, SLOT_TOP_Y - 1), value: '+' + slot.value,
+                             life: 1.2, maxLife: 1.2, vel: vec2(0, .04), color: slot.color, size: 1.9 });
+            if (slot.value >= 100) sndBig.play(b.pos, .7, 1);
+            else sndScore.play(b.pos, .55, .85 + (slot.value/100) * .5);
+            b.cleanupTimer = new Timer(rand(.4, .9)); // pop within the next second
         }
 
-        // stuck on the board too long without scoring — fizzle out silently
+        // stuck too long — fizzle out silently
         if (!b.scored && b.despawnTimer.elapsed())
         {
-            // faint puff in the ball's color so it doesn't feel like a glitch
             for (let k = 6; k--;)
-                scorePops.push({
-                    pos:     b.pos.copy(),
-                    value:   '',
-                    life:    .3,
-                    maxLife: .3,
-                    vel:     randVec2(rand(.04, .15)),
-                    color:   b.color.withAlpha(.7),
-                    size:    rand(.22, .4),
-                });
+                scorePops.push({ pos: b.pos.copy(), value: '', life: .3, maxLife: .3,
+                    vel: randVec2(rand(.04, .15)), color: b.color.withAlpha(.7),
+                    size: rand(.22, .4) });
             if (!b.destroyed) b.destroy();
             balls.splice(i, 1);
             continue;
         }
 
-        // fuse burned out — explode, shove nearby balls, and remove it
+        // fuse burned out — explode, shove neighbors, remove
         if (b.cleanupTimer && b.cleanupTimer.elapsed())
         {
             spawnExplosion(b.pos, b.scoreColor || hsl(.13, .9, .6));
@@ -642,83 +487,57 @@ function checkScoring()
         }
         else if (b.pos.y < FLOOR_Y - 5)
         {
-            // safety net — somehow escaped
-            if (!b.destroyed) b.destroy();
+            if (!b.destroyed) b.destroy(); // safety net — somehow escaped
             balls.splice(i, 1);
         }
     }
 
-    // award a fresh ball for every BALL_PER_BONUS points reached
-    const earned = floor(score / BALL_PER_BONUS);
-    while (bonusBalls < earned)
+    // +1 horse for every BALL_PER_BONUS points
+    while (bonusBalls < floor(score / BALL_PER_BONUS))
     {
         bonusBalls++;
         sndBig.play(vec2(0, DROP_LINE_Y), .6, 1.4);
-        scorePops.push({
-            pos:     vec2(0, DROP_LINE_Y - 2),
-            value:   '+1 Horse',
-            life:    1.4,
-            maxLife: 1.4,
-            vel:     vec2(0, .03),
-            color:   hsl(.13, .9, .7),
-            size:    2.3,
-        });
+        scorePops.push({ pos: vec2(0, DROP_LINE_Y - 2), value: '+1 Horse', life: 1.4, maxLife: 1.4,
+                         vel: vec2(0, .03), color: hsl(.13, .9, .7), size: 2.3 });
     }
 
-    // run ends once every ball is used and the board has cleared
+    // run ends once every ball is used and the board clears
     if (ballsRemaining() <= 0 && balls.length === 0 && !runOver && isPlaying())
     {
         runOver = true;
         showGameOverDialog({ score, onContinue: endRunToTitle });
     }
-
-    // best score persistence
     submitBestScore(score);
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Burst of sparks + an expanding ring when a scored ball pops.
+// burst of sparks + an expanding ring when a scored ball pops
 function spawnExplosion(pos, color)
 {
     sndAngry.play(pos, .8, 1);
     sndScore.play(pos, .35, 1.4);
-    scorePops.push({
-        pos: pos.copy(), value: '', ring: true,
-        life: .4, maxLife: .4, vel: vec2(), color, size: 4,
-    });
+    scorePops.push({ pos: pos.copy(), value: '', ring: true, life: .4, maxLife: .4, vel: vec2(), color, size: 4 });
     for (let i = 14; i--;)
     {
         const l = rand(.3, .6);
-        scorePops.push({
-            pos:   pos.copy(),
-            value: '',
-            life:  l,
-            maxLife: l,
-            vel:   randVec2(rand(.1, .35)),
-            color: color.copy(),
-            size:  rand(.2, .45),
-        });
+        scorePops.push({ pos: pos.copy(), value: '', life: l, maxLife: l,
+                         vel: randVec2(rand(.1, .35)), color: color.copy(), size: rand(.2, .45) });
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Give nearby balls a tiny outward shove when one explodes.
+// gentle outward shove for nearby balls when one explodes
 function pushNearbyBalls(pos, exploder)
 {
-    const R = 3.5; // push radius in world units
+    const R = 3.5; // push radius
     for (const o of balls)
     {
         if (o === exploder || o.destroyed) continue;
         const d = o.pos.subtract(pos);
         const dist = d.length();
         if (dist > R || dist < .01) continue;
-        const strength = (1 - dist / R) * 5; // wu/sec, gentle nudge
-        o.setLinearVelocity(o.getLinearVelocity().add(d.normalize(strength)));
+        o.setLinearVelocity(o.getLinearVelocity().add(d.normalize((1 - dist / R) * 5)));
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Tear down the current run and return to the title.
 function endRunToTitle()
 {
     clearSubmenuStack();
@@ -728,8 +547,7 @@ function endRunToTitle()
     showMenu('title');
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Score popups — animated drifting text above the slots.
+// score popups — drifting text / sparks / rings
 function updatePops()
 {
     for (let i = scorePops.length; i--;)
@@ -746,74 +564,37 @@ function drawPops()
     scorePops.forEach(p =>
     {
         const a = clamp(p.life / p.maxLife, 0, 1);
-        if (p.ring)
-        {
-            const t = 1 - a;                 // expand as it fades
-            const c = p.color.withAlpha(a);
-            drawTile(p.pos, vec2(p.size * (.6 + t*2)), icons.ring, c);
-        }
-        else if (p.value)
-        {
-            const c = p.color.withAlpha(a);
-            const oc = hsl(0,0,0,a);
-            drawText(p.value, p.pos, p.size, c, .15, oc);
-        }
-        else
-        {
-            const c = p.color.withAlpha(a);
-            drawTile(p.pos, vec2(p.size * a * 2.5), icons.glow, c);
-        }
+        const c = p.color.withAlpha(a);
+        if (p.ring) drawTile(p.pos, vec2(p.size * (.6 + (1 - a) * 2)), icons.ring, c);      // expanding ring
+        else if (p.value) drawText(p.value, p.pos, p.size, c, .15, hsl(0, 0, 0, a));
+        else drawTile(p.pos, vec2(p.size * a * 2.5), icons.glow, c);                        // fading spark
     });
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Reset the run.
-function resetGame()
-{
-    balls.forEach(b => { if (!b.destroyed) b.destroy(); });
-    balls = [];
-    scorePops = [];
-    score = 0;
-    dropCount = 0;
-    bonusBalls = 0;
-    runOver = false;
-}
-
-///////////////////////////////////////////////////////////////////////////////
 async function gameInit()
 {
     saveDataInit('plinko');
-    // box2d wasm can take a few hundred ms to compile
-    await box2dInit();
+    await box2dInit(); // wasm can take a few hundred ms to compile
     gravity = vec2(0, -50);
 
-    // LittleJS canvas text (HUD, score popups) uses the bundled TTF font
     fontDefault = '"HanaleiFill", sans-serif';
     await document.fonts.load('40px "HanaleiFill"');
     await document.fonts.ready;
 
-    // bake the 16 built-in white icons into tiles 0-15; we tint per-instance
-    // (8x8 atlas so tile 16 stays free for the horse sprite)
-    initDrawToTexture(8);
+    initDrawToTexture(8); // 8x8 atlas; vite 16 stays free for the horse sprite... (see below)
     icons = initDefaultAtlas();
-    icons.horseLeft  = drawHorseHalfTexture(16, true,  'horse left half');
+    icons.horseLeft = drawHorseHalfTexture(16, true, 'horse left half');
     icons.horseRight = drawHorseHalfTexture(17, false, 'horse right half');
-    icons.horseFull  = drawHorseFullTexture(18, 'horse whole');
+    icons.horseFull = drawHorseFullTexture(18, 'horse whole');
 
     setSoundVolume(.7);
     installAutoPause();
-
     initSounds();
-
     buildBoard();
 
-    // ---------- Title ----------
-    const playFromTitle = () =>
-    {
-        resetGame();
-        setPlaying(true);
-        hideMenu('title');
-    };
+    const playFromTitle = () => { resetGame(); setPlaying(true); hideMenu('title'); };
+
+    // title
     setMenuTheme({accent:'#ffd700'});
     createTitleMenu({
         title: 'HORSE PLINKO',
@@ -829,72 +610,49 @@ async function gameInit()
         ],
     });
 
-    // ---------- Options ----------
-    createOptionsMenu({
-        persistKey: 'volume',
-        showResetBest: true,
-        resetBestMessage: 'Erase your best score?',
-    });
+    // options
+    createOptionsMenu({ persistKey: 'volume', showResetBest: true,
+                        resetBestMessage: 'Erase your best score?' });
 
-    // ---------- About ----------
+    // help
     createMenu({
         id: 'help',
         title: 'HELP',
         onHide: popMenu,
         items: [
-            {type:'text', text:
-                'Aim and drop horses to bounce down through the pegs into the scoring slots — the center is worth the most. You start with 10 balls and earn another every 100 points, so stack up the highest score you can.'},
+            {type:'text', text: 'Aim and drop horses to bounce down through the pegs into the scoring slots — the center is worth the most. You start with 10 balls and earn another every 100 points, so stack up the highest score you can.'},
             {type:'text', text: 'Mouse / touch aim and click to drop · Left / Right also aim · Space drops'},
             {type:'separator'},
             {type:'button', label:'BACK', onClick: () => hideMenu('help')},
         ],
     });
 
-    // ---------- Pause ----------
+    // pause
     createPauseMenu({
-        onQuit: () =>
-        {
-            clearSubmenuStack();
-            hideAllMenus();
-            setPlaying(false);
-            resetGame();
-            showMenu('title');
-        },
+        onQuit: () => { clearSubmenuStack(); hideAllMenus(); setPlaying(false); resetGame(); showMenu('title'); },
         quitMessage: 'Quit to title? Your run will end.',
-        onShow: () =>
-        {
-            const m = getMenu('pause');
-            m?.getItem('pauseScore')?.setLabel(`Score: ${score|0}`);
-        },
+        onShow: () => getMenu('pause')?.getItem('pauseScore')?.setLabel(`Score: ${score|0}`),
         extraItems: [
-            {type:'label',     id:'pauseScore', text:'Score: 0'},
+            {type:'label', id:'pauseScore', text:'Score: 0'},
             {type:'separator'},
-            {type:'button',    id:'options',    label:'OPTIONS', onClick: () => pushMenu('options')},
+            {type:'button', id:'options', label:'OPTIONS', onClick: () => pushMenu('options')},
         ],
     });
 
-    // ---------- HUD toolbar ----------
     installDefaultToolbar({landscapeStack:true});
 
     setPlaying(false);
     showMenu('title');
 }
 
-///////////////////////////////////////////////////////////////////////////////
 function gameUpdate()
 {
-    // Pause on Esc / Start
     if (bindPauseKey({when: () => isPlaying()})) return;
-
     if (!isPlaying()) return;
 
-    // Aim follows the most recently used device: the mouse sets aimX to the
-    // cursor only while it's active; arrows / A-D / gamepad left stick / d-pad
-    // nudge aimX (and hold when idle instead of snapping back to the cursor).
-    if (usingMouseInput())
-        aimX = mousePos.x;
-    else
-        aimX += clamp(keyDirection().x + gamepadStick(0).x, -1, 1) * .35;
+    // aim follows the most recently used device
+    if (usingMouseInput()) aimX = mousePos.x;
+    else aimX += clamp(keyDirection().x + gamepadStick(0).x, -1, 1) * .35;
     aimX = clamp(aimX, -BOARD_WIDTH/2 + 2.5, BOARD_WIDTH/2 - 2.5);
 
     if (mouseWasPressed(0) || keyWasPressed('Space') || gamepadWasPressed(0))
@@ -904,85 +662,68 @@ function gameUpdate()
     updatePops();
 }
 
-///////////////////////////////////////////////////////////////////////////////
 function gameUpdatePost() {}
 
-///////////////////////////////////////////////////////////////////////////////
 function gameRender()
 {
-    // Background — daylight sky fading down to farm fields.
+    // background — daylight sky fading to farm fields
     drawRectGradient(vec2(0, 0), vec2(BOARD_WIDTH*2, BOARD_HEIGHT*2),
         hsl(.55, .6, .3), hsl(.14, .55, .16));
 
-    // Slot floor — colored bands matching SLOT_COLORS, with flashing pulse.
+    // slot floor — colored bands matching SLOT_COLORS, flashing on score
     const slotWidth = BOARD_WIDTH / SLOT_COUNT;
     slots.forEach(s =>
     {
-        const t = s.flashTimer.active() ? s.flashTimer.getPercent() : 0;
-        const flash = 1 - t;
+        const flash = 1 - (s.flashTimer.active() ? s.flashTimer.getPercent() : 0);
         const c = s.color.withAlpha(.65 + flash * .35);
         drawRect(vec2(s.x, SLOT_TOP_Y - 2), vec2(s.width, 2.5), c);
-        // value text inside the slot
-        const maxWidth = 60;
-        drawText(String(s.value),
-            vec2(s.x, SLOT_TOP_Y - 2),
-            1.5 + flash * .5,
-            hsl(.13, 1, .9), .2, hsl(.13, .4, .12), undefined, undefined, undefined, maxWidth);
+        drawText(String(s.value), vec2(s.x, SLOT_TOP_Y - 2), 1.5 + flash * .5,
+            hsl(.13, 1, .9), .2, hsl(.13, .4, .12), undefined, undefined, undefined, 60);
     });
 
     if (!isPlaying()) return;
 
-    // Aim guide — dotted line + ball preview at top of the board.
+    // aim guide — dotted line + horse preview at the top
     const aimClamped = clamp(aimX, -BOARD_WIDTH/2 + 1, BOARD_WIDTH/2 - 1);
     const a = .35 + .2 * sin(time * 4);
-    drawLine(vec2(aimClamped - 0.25, DROP_LINE_Y + 3),
-             vec2(aimClamped - 0.25, DROP_LINE_Y),
+    drawLine(vec2(aimClamped - .25, DROP_LINE_Y + 3), vec2(aimClamped - .25, DROP_LINE_Y),
              .12, hsl(.13, .9, .7, a));
-    drawTile(vec2(aimClamped, DROP_LINE_Y + 5),
-        vec2(HORSE_BALL_SIZE), icons.horseFull, hsl(.13, .9, .7, .7));
+    drawTile(vec2(aimClamped, DROP_LINE_Y + 5), vec2(HORSE_BALL_SIZE),
+        icons.horseFull, hsl(.13, .9, .7, .7));
 }
 
-///////////////////////////////////////////////////////////////////////////////
 function gameRenderPost()
 {
-    // Peg flash — fade overlay highlight on hit pegs (drawn over body).
+    // peg flash — fading highlight on recently hit pegs
     pegs.forEach(p =>
     {
         if (p.isPeg && p.flashTimer.active())
         {
             const t = 1 - p.flashTimer.getPercent();
-            drawTile(p.pos, vec2(PEG_RADIUS*2.3 + t*2),
-                icons.glow, hsl(.13, 1, .8, t * .7));
+            drawTile(p.pos, vec2(PEG_RADIUS*2.3 + t*2), icons.glow, hsl(.13, 1, .8, t * .7));
         }
     });
 
-    // Score popups & particle pops.
     drawPops();
 
     if (isPlaying())
     {
-        // Score HUD
-        drawTextScreen('SCORE  ' + score,
-            vec2(mainCanvasSize.x/2, 70), 60,
+        drawTextScreen('SCORE  ' + score, vec2(mainCanvasSize.x/2, 70), 60,
             hsl(.13, 1, .72), 6, hsl(.13, .5, .12));
-        drawTextScreen('BEST  ' + getBestScore(),
-            vec2(mainCanvasSize.x/2, 120), 30,
+        drawTextScreen('BEST  ' + getBestScore(), vec2(mainCanvasSize.x/2, 120), 30,
             hsl(.1, .8, .85), 4, hsl(.13, .5, .12));
-        drawTextScreen('HORSES REMAINING ' + ballsRemaining(),
-            vec2(mainCanvasSize.x/2, 158), 26,
+        drawTextScreen('HORSES REMAINING ' + ballsRemaining(), vec2(mainCanvasSize.x/2, 158), 26,
             hsl(.3, .8, .75), 3, hsl(.13, .5, .12));
     }
     else if (!isMenuVisible())
     {
-        // Pre-play prompt — pulses to invite a click.
+        // pre-play prompt — pulses to invite a click
         const prompt = isTouchDevice ? 'TOUCH TO PLAY' : 'CLICK TO PLAY';
-        const aPulse = 0.5 + 0.5 * sin(time * 3);
-        drawTextScreen(prompt,
-            vec2(mainCanvasSize.x/2, mainCanvasSize.y/2),
-            56, hsl(.1, .9, .92, aPulse), 7, hsl(.13, .5, .12, aPulse));
+        const aPulse = .5 + .5 * sin(time * 3);
+        drawTextScreen(prompt, vec2(mainCanvasSize.x/2, mainCanvasSize.y/2), 56,
+            hsl(.1, .9, .92, aPulse), 7, hsl(.13, .5, .12, aPulse));
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////
 engineInit(gameInit, gameUpdate, gameUpdatePost, gameRender, gameRenderPost);
 </script></body></html>
